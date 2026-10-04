@@ -2,16 +2,20 @@
 
 import React, { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
-import { Users, Plus, Calendar, Target, ShieldAlert, CheckCircle, ChevronRight } from 'lucide-react';
+import { Users, Plus, Calendar, Target, CheckCircle, ChevronRight, Lock, KeyRound, LogOut } from 'lucide-react';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const coachSecret = process.env.NEXT_PUBLIC_COACH_SECRET || '1234'; // Default fallback code
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export default function CoachDashboard() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [inputPin, setInputPin] = useState('');
+  const [authError, setAuthError] = useState(false);
+
   const [clients, setClients] = useState([]);
   const [selectedClient, setSelectedClient] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [statusMsg, setStatusMsg] = useState('');
 
   // Workout Builder State
@@ -30,10 +34,33 @@ export default function CoachDashboard() {
     fat: 65,
   });
 
-  // Fetch Clients on Load
+  // Check saved session on load
   useEffect(() => {
-    fetchClients();
+    const savedAuth = localStorage.getItem('coach_authorized');
+    if (savedAuth === 'true') {
+      setIsAuthenticated(true);
+      fetchClients();
+    }
   }, []);
+
+  const handleLogin = (e) => {
+    e.preventDefault();
+    if (inputPin === coachSecret) {
+      setIsAuthenticated(true);
+      localStorage.setItem('coach_authorized', 'true');
+      setAuthError(false);
+      fetchClients();
+    } else {
+      setAuthError(true);
+      setInputPin('');
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('coach_authorized');
+    setIsAuthenticated(false);
+    setInputPin('');
+  };
 
   const fetchClients = async () => {
     try {
@@ -49,15 +76,12 @@ export default function CoachDashboard() {
           fat: data[0].target_fat || 60,
         });
       } else {
-        // Fallback demo client if the table is currently empty
         const demoClient = { id: 'demo-1', full_name: 'Alex Miller', email: 'alex@example.com' };
         setClients([demoClient]);
         setSelectedClient(demoClient);
       }
     } catch (err) {
       console.log('Error fetching clients:', err.message);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -88,7 +112,6 @@ export default function CoachDashboard() {
     setExerciseBlocks(exerciseBlocks.filter((_, i) => i !== index));
   };
 
-  // Save Workout to Supabase
   const handleAssignWorkout = async (e) => {
     e.preventDefault();
     if (!selectedClient || !workoutTitle.trim()) {
@@ -97,10 +120,8 @@ export default function CoachDashboard() {
     }
 
     setStatusMsg('Publishing workout...');
-
     try {
-      // 1. Insert Workout
-      const { data: workout, error: wError } = await supabase
+      const { error: wError } = await supabase
         .from('assigned_workouts')
         .insert([
           {
@@ -110,27 +131,23 @@ export default function CoachDashboard() {
             coach_notes: coachNotes,
             is_completed: false,
           },
-        ])
-        .select()
-        .single();
+        ]);
 
       if (wError) throw wError;
 
-      // 2. Insert exercises if library table exists, or notify
-      setStatusMsg(`Workout "${workoutTitle}" assigned successfully to ${selectedClient.full_name}!`);
+      setStatusMsg(`Workout "${workoutTitle}" assigned to ${selectedClient.full_name}!`);
       setWorkoutTitle('');
       setCoachNotes('');
       setTimeout(() => setStatusMsg(''), 4000);
     } catch (err) {
-      setStatusMsg(`Saved locally! (Note: Connect client profile in Supabase to link permanently).`);
+      setStatusMsg('Saved locally! Link client in Supabase to sync permanently.');
       setTimeout(() => setStatusMsg(''), 4000);
     }
   };
 
-  // Update Macro Goals in Supabase
   const handleUpdateMacros = async () => {
     if (!selectedClient || selectedClient.id === 'demo-1') {
-      setStatusMsg('Macros saved locally for preview.');
+      setStatusMsg('Saved preview targets.');
       setTimeout(() => setStatusMsg(''), 3000);
       return;
     }
@@ -147,14 +164,62 @@ export default function CoachDashboard() {
         .eq('id', selectedClient.id);
 
       if (error) throw error;
-      setStatusMsg(`Updated macro targets for ${selectedClient.full_name}!`);
+      setStatusMsg(`Updated macros for ${selectedClient.full_name}!`);
       setTimeout(() => setStatusMsg(''), 3000);
     } catch (err) {
-      setStatusMsg('Failed to update macros.');
+      setStatusMsg('Error updating macros.');
       setTimeout(() => setStatusMsg(''), 3000);
     }
   };
 
+  // Lock Screen View if not logged in
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4 font-sans">
+        <div className="max-w-sm w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6 text-center">
+          <div className="w-12 h-12 bg-blue-950 border border-blue-800 text-blue-400 rounded-xl flex items-center justify-center mx-auto">
+            <Lock size={22} />
+          </div>
+
+          <div>
+            <h1 className="text-lg font-bold">Coach Access</h1>
+            <p className="text-xs text-slate-400 mt-1">Enter your admin passcode to manage client programming.</p>
+          </div>
+
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <input
+                type="password"
+                placeholder="Enter passcode"
+                value={inputPin}
+                onChange={(e) => setInputPin(e.target.value)}
+                className={`w-full bg-slate-950 border rounded-xl p-3 text-center text-sm text-white tracking-widest outline-none transition ${
+                  authError ? 'border-rose-500 focus:border-rose-500' : 'border-slate-800 focus:border-blue-500'
+                }`}
+                autoFocus
+              />
+              {authError && (
+                <p className="text-[11px] text-rose-400 mt-2 font-medium">Incorrect passcode. Please try again.</p>
+              )}
+            </div>
+
+            <button
+              type="submit"
+              className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold transition active:scale-[0.99] flex items-center justify-center gap-2"
+            >
+              <KeyRound size={15} /> Unlock Dashboard
+            </button>
+          </form>
+
+          <a href="/" className="inline-block text-xs text-slate-500 hover:text-slate-400 transition">
+            ← Return to Client Portal
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  // Authenticated Admin Dashboard
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans p-4 md:p-8">
       <div className="max-w-6xl mx-auto space-y-6">
@@ -168,29 +233,35 @@ export default function CoachDashboard() {
               </span>
               <h1 className="text-xl font-bold tracking-tight">Coach Programming Studio</h1>
             </div>
-            <p className="text-xs text-slate-400 mt-1">Prescribe workouts, set nutritional bounds, and monitor tolerance.</p>
+            <p className="text-xs text-slate-400 mt-1">Prescribe workouts, set nutritional targets, and track load.</p>
           </div>
-          <a
-            href="/"
-            className="text-xs px-3 py-2 bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-lg text-slate-300 self-start md:self-auto transition"
-          >
-            ← View Client Mobile App
-          </a>
+          <div className="flex items-center gap-3">
+            <a
+              href="/"
+              className="text-xs px-3 py-2 bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-lg text-slate-300 transition"
+            >
+              Client View
+            </a>
+            <button
+              onClick={handleLogout}
+              className="text-xs px-3 py-2 bg-rose-950/40 border border-rose-900/60 hover:bg-rose-900/40 rounded-lg text-rose-300 flex items-center gap-1.5 transition"
+            >
+              <LogOut size={13} /> Lock
+            </button>
+          </div>
         </header>
 
-        {/* Status Notification */}
         {statusMsg && (
-          <div className="p-3 bg-blue-950 border border-blue-800 text-blue-200 text-xs font-medium rounded-lg text-center animate-fade-in">
+          <div className="p-3 bg-blue-950 border border-blue-800 text-blue-200 text-xs font-medium rounded-lg text-center">
             {statusMsg}
           </div>
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
-          {/* Left Column: Client Selector & Macros */}
+          {/* Left Column */}
           <div className="space-y-6">
-            
-            {/* Client Picker Card */}
+            {/* Client Picker */}
             <div className="bg-slate-900/80 rounded-xl p-5 border border-slate-800 space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-semibold flex items-center gap-2">
@@ -207,7 +278,7 @@ export default function CoachDashboard() {
                     className={`w-full text-left p-2.5 rounded-lg border text-xs flex justify-between items-center transition ${
                       selectedClient?.id === c.id
                         ? 'bg-blue-950/60 border-blue-600 text-white font-medium'
-                        : 'bg-slate-950/40 border-slate-800/80 text-slate-300 hover:bg-slate-850'
+                        : 'bg-slate-950/40 border-slate-800 text-slate-300 hover:bg-slate-850'
                     }`}
                   >
                     <div>
@@ -220,13 +291,13 @@ export default function CoachDashboard() {
               </div>
             </div>
 
-            {/* Nutrition Targets Card */}
+            {/* Nutrition Targets */}
             <div className="bg-slate-900/80 rounded-xl p-5 border border-slate-800 space-y-4">
               <h2 className="text-sm font-semibold flex items-center gap-2">
                 <Target size={16} className="text-emerald-400" /> Macro Targets
               </h2>
               <p className="text-xs text-slate-400">
-                Assigned goals for {selectedClient ? selectedClient.full_name : 'Client'}:
+                Targets for {selectedClient ? selectedClient.full_name : 'Client'}:
               </p>
 
               <div className="grid grid-cols-2 gap-3 text-xs">
@@ -249,7 +320,7 @@ export default function CoachDashboard() {
                   />
                 </div>
                 <div>
-                  <label className="text-slate-400 block mb-1">Carbohydrates (g)</label>
+                  <label className="text-slate-400 block mb-1">Carbs (g)</label>
                   <input
                     type="number"
                     value={macroTargets.carbs}
@@ -258,7 +329,7 @@ export default function CoachDashboard() {
                   />
                 </div>
                 <div>
-                  <label className="text-slate-400 block mb-1">Dietary Fats (g)</label>
+                  <label className="text-slate-400 block mb-1">Fats (g)</label>
                   <input
                     type="number"
                     value={macroTargets.fat}
@@ -277,16 +348,16 @@ export default function CoachDashboard() {
             </div>
           </div>
 
-          {/* Right 2 Columns: Workout Prescription Builder */}
+          {/* Right Columns: Workout Builder */}
           <div className="lg:col-span-2 space-y-6">
             <div className="bg-slate-900/80 rounded-xl p-5 border border-slate-800 space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-800 gap-2">
                 <div>
                   <h2 className="text-sm font-semibold flex items-center gap-2">
-                    <Calendar size={16} className="text-blue-400" /> Program New Workout
+                    <Calendar size={16} className="text-blue-400" /> Program Workout
                   </h2>
                   <p className="text-xs text-slate-400">
-                    Assigning to: <span className="text-white font-medium">{selectedClient?.full_name}</span>
+                    Client: <span className="text-white font-medium">{selectedClient?.full_name}</span>
                   </p>
                 </div>
                 <input
@@ -297,23 +368,22 @@ export default function CoachDashboard() {
                 />
               </div>
 
-              {/* Title & Notes */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs text-slate-400 block mb-1">Session Title</label>
                   <input
                     type="text"
-                    placeholder="e.g., Lower Body Hypertrophy & Hip Control"
+                    placeholder="e.g., Lower Body Hypertrophy"
                     value={workoutTitle}
                     onChange={(e) => setWorkoutTitle(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white outline-none focus:border-blue-500"
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-slate-400 block mb-1">Session Notes / Focus</label>
+                  <label className="text-xs text-slate-400 block mb-1">Coaching Cues / Rest Focus</label>
                   <input
                     type="text"
-                    placeholder="e.g., Keep RPE under 8 on deadlifts; watch knee track"
+                    placeholder="e.g., RPE under 8 on deadlifts; rest 90s"
                     value={coachNotes}
                     onChange={(e) => setCoachNotes(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white outline-none focus:border-blue-500"
@@ -321,10 +391,10 @@ export default function CoachDashboard() {
                 </div>
               </div>
 
-              {/* Exercise Block List */}
+              {/* Exercise Blocks */}
               <div className="space-y-3">
                 <div className="flex justify-between items-center">
-                  <span className="text-xs font-semibold text-slate-300">Exercise Blocks</span>
+                  <span className="text-xs font-semibold text-slate-300">Prescribed Movements</span>
                   <button
                     onClick={addExerciseRow}
                     className="text-xs px-2.5 py-1 bg-blue-950 border border-blue-800 text-blue-300 rounded hover:bg-blue-900 flex items-center gap-1 transition"
@@ -339,7 +409,7 @@ export default function CoachDashboard() {
                       <div className="flex gap-2">
                         <input
                           type="text"
-                          placeholder="Exercise name (e.g. Bulgarian Split Squat)"
+                          placeholder="Movement (e.g. Bulgarian Split Squat)"
                           value={block.exercise_name}
                           onChange={(e) => updateExerciseRow(idx, 'exercise_name', e.target.value)}
                           className="flex-1 bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-white outline-none focus:border-blue-500"
@@ -382,7 +452,7 @@ export default function CoachDashboard() {
                           />
                         </div>
                         <div>
-                          <span className="text-[10px] text-slate-500 uppercase block">Cues / Tempo</span>
+                          <span className="text-[10px] text-slate-500 uppercase block">Tempo / Notes</span>
                           <input
                             type="text"
                             placeholder="3-0-1-0"
@@ -397,7 +467,6 @@ export default function CoachDashboard() {
                 </div>
               </div>
 
-              {/* Publish Button */}
               <button
                 onClick={handleAssignWorkout}
                 className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold transition flex items-center justify-center gap-2 active:scale-[0.99]"
